@@ -8,6 +8,4 @@ const QTY_MULTIPLIER: i64 = 1000;
 const PRICE_MULTIPLIER: i64 = 10;
 
 fn main() {
-    println!("Hello, world!");
 }
-

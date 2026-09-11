@@ -1,7 +1,12 @@
 use crate::order::Side;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+const PRICE_PRECISION:u32 = 1;
+const QTY_PRECISION:u32 = 3;
 
 #[derive(Debug, Clone, Copy)]
-struct Trade {
+pub struct Trade {
     timestamp: i64,
     price: i64,
     qty: i64,
@@ -9,7 +14,7 @@ struct Trade {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct BookTicker {
+pub struct BookTicker {
     timestamp: i64,
     best_bid_price: i64,
     best_bid_qty: i64,
@@ -17,10 +22,18 @@ struct BookTicker {
     best_ask_qty: i64,
 }
 
+#[derive(Debug)]
+pub struct TradeReader {
+    reader: BufReader<File>,
+    buf: String,
+    pending: Option<Trade>,
+}
+
 #[derive(Debug, PartialEq)]
-enum ParseError {
+pub enum ParseError {
     Malformed,
     TooPrecise,
+    FieldCount,
 }
 
 /// Converts a fixed-point decimal string into an integer scaled by
@@ -76,6 +89,37 @@ fn parse_scaled(field: &str, precision: u32) -> Result<i64, ParseError> {
         }
     }
 
+}
+
+fn parse_trade(line: &str) -> Result<Trade, ParseError> {
+
+    let mut it = line.split(',');
+
+    let _agg_trade_id   = it.next().ok_or(ParseError::FieldCount)?;
+    let price           = it.next().ok_or(ParseError::FieldCount)?;
+    let quantity        = it.next().ok_or(ParseError::FieldCount)?;
+    let _first_trade_id = it.next().ok_or(ParseError::FieldCount)?;
+    let _last_trade_id  = it.next().ok_or(ParseError::FieldCount)?;
+    let transact_time   = it.next().ok_or(ParseError::FieldCount)?;
+    let is_buyer_maker  = it.next().ok_or(ParseError::FieldCount)?;
+
+    if it.next().is_some() {
+        return Err(ParseError::FieldCount);
+    }
+
+    let price = parse_scaled(price, PRICE_PRECISION)?;
+    let quantity = parse_scaled(quantity, QTY_PRECISION)?;
+    let transact_time = transact_time.parse::<i64>().map_err(|_| ParseError::Malformed)?;
+
+    // is_buyer_maker: the buyer was resting in the book, so an aggressive
+    // seller consumed liquidity from the bid side.
+    let side = match is_buyer_maker {
+        "true"  => Side::Bid,
+        "false" => Side::Ask,
+        _ => return Err(ParseError::Malformed),
+    };
+
+    Ok(Trade { timestamp: transact_time, price, qty: quantity, consumed: side })
 }
 
 

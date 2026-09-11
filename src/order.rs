@@ -1,4 +1,6 @@
-#[derive(Debug, PartialEq, Clone, Copy)]
+use serde::Deserialize;
+
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 pub enum Side {
     Bid,
     Ask,
