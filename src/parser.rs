@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 const PRICE_PRECISION:u32 = 1;
 const QTY_PRECISION:u32 = 3;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Trade {
     timestamp: i64,
     price: i64,
@@ -13,7 +13,7 @@ pub struct Trade {
     consumed: Side,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BookTicker {
     timestamp: i64,
     best_bid_price: i64,
@@ -126,9 +126,8 @@ fn parse_trade(line: &str) -> Result<Trade, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    const PRICE_PRECISION: u32 = 1;
-    const QTY_PRECISION: u32 = 3;
 
+    // Tests for parse_scaled
     #[test]
     fn aggtrades_price_shape() {
         assert_eq!(parse_scaled("71455.6", PRICE_PRECISION), Ok(714556));
@@ -208,10 +207,70 @@ mod tests {
     fn magnitude_headroom() {
         assert_eq!(parse_scaled("999999.9", PRICE_PRECISION), Ok(9999999));
     }
-
     #[test]
     fn double_decimal_point_is_malformed() {
         assert_eq!(parse_scaled("1.2.3", QTY_PRECISION), Err(ParseError::Malformed));
         assert_eq!(parse_scaled("1.2.3", PRICE_PRECISION), Err(ParseError::Malformed));
+    }
+
+    // Tests for parse_trade
+    #[test]
+    fn buyer_maker_test() {
+        let buyer_maker: &str = "2072657703,71455.6,0.148,4735739403,4735739407,1710460800043,true";
+        let trade = parse_trade(buyer_maker).unwrap();
+        let trade_comp = Trade {
+            timestamp: 1710460800043,
+            price: 714556,
+            qty: 148,
+            consumed: Side::Bid,
+        };
+        assert_eq!(trade, trade_comp);
+    }
+    #[test]
+    fn seller_maker_test() {
+        let seller_maker = "2072657704,71455.7,0.002,4735739408,4735739408,1710460800043,false";
+        let trade = parse_trade(seller_maker).unwrap();
+        let trade_comp = Trade {
+            timestamp: 1710460800043,
+            price: 714557,
+            qty: 2,
+            consumed: Side::Ask,
+        };
+        assert_eq!(trade, trade_comp);
+    }
+    #[test]
+    fn too_many_fields() {
+        let malformed_line = "2072657704,71455.7,0.002,4735739408,4735739408,1710460800043,false,true";
+        assert_eq!(parse_trade(malformed_line), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn too_little_fields() {
+        let malformed_line = "2072657704,4735739408,4735739408,1710460800043";
+        assert_eq!(parse_trade(malformed_line), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn no_fields() {
+        let malformed_line = "";
+        assert_eq!(parse_trade(malformed_line), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn non_existent_side() {
+        let malformed_line = "2072657704,71455.7,0.002,4735739408,4735739408,1710460800043,maybe";
+        assert_eq!(parse_trade(malformed_line), Err(ParseError::Malformed));
+    }
+    #[test]
+    fn malformed_timestamp() {
+        let malformed_line = "2072657704,71455.7,0.002,4735739408,4735739408,abcd,true";
+        assert_eq!(parse_trade(malformed_line), Err(ParseError::Malformed));
+    }
+    #[test]
+    fn too_much_precision() {
+        let buyer_maker: &str = "2072657703,71455.00000003453,0.148,4735739403,4735739407,1710460800043,true";
+        assert_eq!(parse_trade(buyer_maker), Err(ParseError::TooPrecise));
+    }
+    #[test]
+    fn header_parsing_error() {
+        let buyer_maker: &str = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker";
+        assert_eq!(parse_trade(buyer_maker), Err(ParseError::Malformed));
     }
 }
