@@ -119,7 +119,46 @@ fn parse_trade(line: &str) -> Result<Trade, ParseError> {
         _ => return Err(ParseError::Malformed),
     };
 
-    Ok(Trade { timestamp: transact_time, price, qty: quantity, consumed: side })
+    Ok(
+        Trade { 
+            timestamp: transact_time, 
+            price, 
+            qty: quantity, 
+            consumed: side 
+        }
+    )
+}
+
+fn parse_book_ticker(line: &str) -> Result<BookTicker, ParseError> {
+    let mut it = line.split(',');
+
+    let _update_id = it.next().ok_or(ParseError::FieldCount)?;
+    let best_bid_price = it.next().ok_or(ParseError::FieldCount)?;
+    let best_bid_qty = it.next().ok_or(ParseError::FieldCount)?;
+    let best_ask_price = it.next().ok_or(ParseError::FieldCount)?;
+    let best_ask_qty = it.next().ok_or(ParseError::FieldCount)?;
+    let transact_time = it.next().ok_or(ParseError::FieldCount)?;
+    let _event_time = it.next().ok_or(ParseError::FieldCount)?;
+
+    if it.next().is_some() {
+        return Err(ParseError::FieldCount);
+    }
+
+    let best_bid_price = parse_scaled(best_bid_price, PRICE_PRECISION)?;
+    let best_bid_qty = parse_scaled(best_bid_qty, QTY_PRECISION)?;
+    let best_ask_price = parse_scaled(best_ask_price, PRICE_PRECISION)?;
+    let best_ask_qty = parse_scaled(best_ask_qty, QTY_PRECISION)?;
+    let transact_time = transact_time.parse::<i64>().map_err(|_| ParseError::Malformed)?;
+
+    Ok(
+        BookTicker { 
+            timestamp: transact_time, 
+            best_bid_price: best_bid_price, 
+            best_bid_qty: best_bid_qty, 
+            best_ask_price: best_ask_price, 
+            best_ask_qty: best_ask_qty, 
+        }
+    )
 }
 
 
@@ -272,5 +311,62 @@ mod tests {
     fn header_parsing_error() {
         let buyer_maker: &str = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker";
         assert_eq!(parse_trade(buyer_maker), Err(ParseError::Malformed));
+    }
+
+    // Tests for parse_book_ticker
+    #[test]
+    fn book_ticker_real_line() {
+        let line = "4183452554160,71455.50000000,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012";
+        let expected = BookTicker {
+            timestamp: 1710460800006,
+            best_bid_price: 714555,
+            best_bid_qty: 2129,
+            best_ask_price: 714556,
+            best_ask_qty: 2260,
+        };
+        assert_eq!(parse_book_ticker(line), Ok(expected));
+    }
+    #[test]
+    fn book_ticker_uses_transaction_time_not_event_time() {
+        let line = "4183452554171,71455.50000000,2.13900000,71455.60000000,2.26000000,1710460800006,1710460800013";
+        let ticker = parse_book_ticker(line).unwrap();
+        assert_eq!(ticker.timestamp, 1710460800006);
+    }
+    #[test]
+    fn book_ticker_bid_and_ask_are_not_swapped() {
+        let line = "4183452554412,71455.50000000,4.35500000,71455.60000000,2.25200000,1710460800009,1710460800016";
+        let ticker = parse_book_ticker(line).unwrap();
+        assert!(ticker.best_bid_price < ticker.best_ask_price);
+        assert_eq!(ticker.best_bid_qty, 4355);
+        assert_eq!(ticker.best_ask_qty, 2252);
+    }
+    #[test]
+    fn book_ticker_too_many_fields() {
+        let line = "4183452554160,71455.50000000,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012,9";
+        assert_eq!(parse_book_ticker(line), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn book_ticker_too_few_fields() {
+        let line = "4183452554160,71455.50000000,2.12900000,71455.60000000";
+        assert_eq!(parse_book_ticker(line), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn book_ticker_empty_line() {
+        assert_eq!(parse_book_ticker(""), Err(ParseError::FieldCount));
+    }
+    #[test]
+    fn book_ticker_header_is_rejected() {
+        let line = "update_id,best_bid_price,best_bid_qty,best_ask_price,best_ask_qty,transaction_time,event_time";
+        assert_eq!(parse_book_ticker(line), Err(ParseError::Malformed));
+    }
+    #[test]
+    fn book_ticker_malformed_timestamp() {
+        let line = "4183452554160,71455.50000000,2.12900000,71455.60000000,2.26000000,abcd,1710460800012";
+        assert_eq!(parse_book_ticker(line), Err(ParseError::Malformed));
+    }
+    #[test]
+    fn book_ticker_excess_precision_propagates() {
+        let line = "4183452554160,71455.55000000,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012";
+        assert_eq!(parse_book_ticker(line), Err(ParseError::TooPrecise));
     }
 }
