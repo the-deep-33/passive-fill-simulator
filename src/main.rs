@@ -2,6 +2,7 @@ mod order;
 mod parser;
 
 use parser::TradeReader;
+use parser::BookTickerReader;
 
 // Binance BTCUSDT perpetual: tick size 0.01, quantity step 0.001.
 // Prices and quantities are integers everywhere; scaling happens
@@ -20,5 +21,16 @@ fn main() -> Result<(), parser::ParseError> {
     }
 
     println!("{count} trades in {:?}", start.elapsed());
+
+    let mut reader = parser::BookTickerReader::open("data/BTCUSDT-bookTicker-2024-03-15.csv")?;
+    let mut count: u64 = 0;
+
+    let start = std::time::Instant::now();
+
+    while let Some(_trade) = reader.next_tick()? {
+        count += 1;
+    }
+
+    println!("{count} ticks in {:?}", start.elapsed());
     Ok(())
 }

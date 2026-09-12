@@ -78,6 +78,48 @@ impl TradeReader {
     }
 }
 
+#[derive(Debug)]
+pub struct BookTickerReader {
+    reader: BufReader<File>,
+    buf: String,
+    pending: Option<BookTicker>,
+}
+
+impl BookTickerReader {
+    fn fill(&mut self) -> Result<(), ParseError> {
+        self.buf.clear();
+        let n = self.reader.read_line(&mut self.buf)?;
+        self.pending = if n == 0 {
+            None
+        } else {
+            Some(parse_book_ticker(self.buf.trim_end())?)
+        };
+        Ok(())
+    }
+    pub fn open(filepath: &str) -> Result<Self, ParseError> {
+        let file = File::open(filepath)?;
+        let mut reader = BufReader::new(file);
+        let mut buf = String::with_capacity(128);
+        reader.read_line(&mut buf)?; // header, discarded
+
+        let mut r = BookTickerReader { reader, buf, pending: None };
+        r.fill()?;
+        Ok(r)
+    }
+    pub fn peek_ts(&self) -> Option<i64> {
+        let pending = self.pending?;
+        let timestamp = pending.timestamp;
+        Some(timestamp)
+    }
+    pub fn next_tick(&mut self) -> Result<Option<BookTicker>, ParseError> {
+        let tick = self.pending.take();
+
+        self.fill()?;
+
+        Ok(tick)
+    }
+}
+
 /// Converts a fixed-point decimal string into an integer scaled by
 /// 10^precision. The integral and the fractional parts are parsed
 /// separately, meaning there are no floating point errors at stake.
