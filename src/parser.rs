@@ -2,7 +2,7 @@ use crate::order::Side;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-const PRICE_PRECISION:u32 = 1;
+const PRICE_PRECISION:u32 = 2;
 const QTY_PRECISION:u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,6 +22,20 @@ pub struct BookTicker {
     best_ask_qty: i64,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    Malformed,
+    TooPrecise,
+    FieldCount,
+    Io(std::io::ErrorKind),
+}
+
+impl From<std::io::Error> for ParseError {
+    fn from(e: std::io::Error) -> Self {
+        ParseError::Io(e.kind())
+    }
+}
+
 #[derive(Debug)]
 pub struct TradeReader {
     reader: BufReader<File>,
@@ -29,11 +43,39 @@ pub struct TradeReader {
     pending: Option<Trade>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum ParseError {
-    Malformed,
-    TooPrecise,
-    FieldCount,
+impl TradeReader {
+    fn fill(&mut self) -> Result<(), ParseError> {
+        self.buf.clear();
+        let n = self.reader.read_line(&mut self.buf)?;
+        self.pending = if n == 0 {
+            None
+        } else {
+            Some(parse_trade(self.buf.trim_end())?)
+        };
+        Ok(())
+    }
+    pub fn open(filepath: &str) -> Result<Self, ParseError> {
+        let file = File::open(filepath)?;
+        let mut reader = BufReader::new(file);
+        let mut buf = String::with_capacity(128);
+        reader.read_line(&mut buf)?; // header, discarded
+
+        let mut r = TradeReader { reader, buf, pending: None };
+        r.fill()?;
+        Ok(r)
+    }
+    pub fn peek_ts(&self) -> Option<i64> {
+        let pending = self.pending?;
+        let timestamp = pending.timestamp;
+        Some(timestamp)
+    }
+    pub fn next_trade(&mut self) -> Result<Option<Trade>, ParseError> {
+        let trade = self.pending.take();
+
+        self.fill()?;
+
+        Ok(trade)
+    }
 }
 
 /// Converts a fixed-point decimal string into an integer scaled by
@@ -62,6 +104,9 @@ fn parse_scaled(field: &str, precision: u32) -> Result<i64, ParseError> {
         }
         Some((integral, fraction)) => {
             if fraction.is_empty() {
+                return Err(ParseError::Malformed);
+            }
+            if !fraction.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(ParseError::Malformed);
             }
             let precision = precision as usize;
@@ -169,13 +214,19 @@ mod tests {
     // Tests for parse_scaled
     #[test]
     fn aggtrades_price_shape() {
-        assert_eq!(parse_scaled("71455.6", PRICE_PRECISION), Ok(714556));
-        assert_eq!(parse_scaled("71455.7", PRICE_PRECISION), Ok(714557));
+        assert_eq!(parse_scaled("71455.6", PRICE_PRECISION), Ok(7145560));
+        assert_eq!(parse_scaled("71455.7", PRICE_PRECISION), Ok(7145570));
+    }
+    #[test]
+    fn real_tick_size_is_two_decimals() {
+        // Row 22486 of BTCUSDT-aggTrades-2024-03-15: the row that caught
+        // an incorrect tick-size assumption on first contact with real data.
+        assert_eq!(parse_scaled("71799.36", PRICE_PRECISION), Ok(7179936));
     }
     #[test]
     fn bookticker_price_shape() {
-        assert_eq!(parse_scaled("71455.50000000", PRICE_PRECISION), Ok(714555));
-        assert_eq!(parse_scaled("71455.60000000", PRICE_PRECISION), Ok(714556));
+        assert_eq!(parse_scaled("71455.50000000", PRICE_PRECISION), Ok(7145550));
+        assert_eq!(parse_scaled("71455.60000000", PRICE_PRECISION), Ok(7145560));
     }
     #[test]
     fn aggtrades_quantity_shape() {
@@ -196,8 +247,8 @@ mod tests {
     }
     #[test]
     fn whole_number_is_still_scaled() {
-        assert_eq!(parse_scaled("50", PRICE_PRECISION), Ok(500));
-        assert_eq!(parse_scaled("50.0", PRICE_PRECISION), Ok(500));
+        assert_eq!(parse_scaled("50", PRICE_PRECISION), Ok(5000));
+        assert_eq!(parse_scaled("50.0", PRICE_PRECISION), Ok(5000));
     }
     #[test]
     fn short_fraction_is_padded_not_left_aligned() {
@@ -213,12 +264,12 @@ mod tests {
     }
     #[test]
     fn trailing_zeros_beyond_precision_are_discarded() {
-        assert_eq!(parse_scaled("1.1000", PRICE_PRECISION), Ok(11));
+        assert_eq!(parse_scaled("1.1000", PRICE_PRECISION), Ok(110));
     }
     #[test]
     fn significant_digit_beyond_precision_is_rejected() {
         assert_eq!(parse_scaled("0.000234", QTY_PRECISION), Err(ParseError::TooPrecise));
-        assert_eq!(parse_scaled("71455.65", PRICE_PRECISION), Err(ParseError::TooPrecise));
+        assert_eq!(parse_scaled("71455.655", PRICE_PRECISION), Err(ParseError::TooPrecise));
     }
     #[test]
     fn missing_fraction_after_point_is_malformed() {
@@ -244,7 +295,7 @@ mod tests {
     }
     #[test]
     fn magnitude_headroom() {
-        assert_eq!(parse_scaled("999999.9", PRICE_PRECISION), Ok(9999999));
+        assert_eq!(parse_scaled("999999.9", PRICE_PRECISION), Ok(99999990));
     }
     #[test]
     fn double_decimal_point_is_malformed() {
@@ -259,7 +310,7 @@ mod tests {
         let trade = parse_trade(buyer_maker).unwrap();
         let trade_comp = Trade {
             timestamp: 1710460800043,
-            price: 714556,
+            price: 7145560,
             qty: 148,
             consumed: Side::Bid,
         };
@@ -271,11 +322,19 @@ mod tests {
         let trade = parse_trade(seller_maker).unwrap();
         let trade_comp = Trade {
             timestamp: 1710460800043,
-            price: 714557,
+            price: 7145570,
             qty: 2,
             consumed: Side::Ask,
         };
         assert_eq!(trade, trade_comp);
+    }
+    #[test]
+    fn two_decimal_price_row_parses() {
+        let line = "2072680187,71799.36,0.001,4735795907,4735795907,1710462181496,false";
+        let trade = parse_trade(line).unwrap();
+        assert_eq!(trade.price, 7179936);
+        assert_eq!(trade.qty, 1);
+        assert_eq!(trade.consumed, Side::Ask);
     }
     #[test]
     fn too_many_fields() {
@@ -319,9 +378,9 @@ mod tests {
         let line = "4183452554160,71455.50000000,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012";
         let expected = BookTicker {
             timestamp: 1710460800006,
-            best_bid_price: 714555,
+            best_bid_price: 7145550,
             best_bid_qty: 2129,
-            best_ask_price: 714556,
+            best_ask_price: 7145560,
             best_ask_qty: 2260,
         };
         assert_eq!(parse_book_ticker(line), Ok(expected));
@@ -366,7 +425,7 @@ mod tests {
     }
     #[test]
     fn book_ticker_excess_precision_propagates() {
-        let line = "4183452554160,71455.55000000,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012";
+        let line = "4183452554160,71455.555,2.12900000,71455.60000000,2.26000000,1710460800006,1710460800012";
         assert_eq!(parse_book_ticker(line), Err(ParseError::TooPrecise));
     }
 }
