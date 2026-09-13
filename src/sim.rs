@@ -35,6 +35,7 @@ fn apply_trade(slot: &mut Option<OpenOrder>, t: &Trade, label: &str) {
         println!("{label} filled {filled} at timestamp: {}", t.timestamp);
     }
     if order.qty_remaining == 0 {
+        println!("Total time for the {label} side of the order to fill: {}", (t.timestamp - order.created_ts));
         *slot = None;
     }
 }
@@ -91,6 +92,7 @@ impl Simulator {
                     self.quote.bid_price,
                     bt.best_bid_qty,
                     self.quote.qty,
+                    now,
                 ));
 
                 self.ask = Some(OpenOrder::new(
@@ -99,6 +101,7 @@ impl Simulator {
                     self.quote.ask_price,
                     bt.best_ask_qty,
                     self.quote.qty,
+                    now,
                 ));
 
                 self.inserted = true;

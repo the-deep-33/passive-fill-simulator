@@ -11,18 +11,29 @@ pub struct OpenOrder {
     pub price: i64,
     pub qty_ahead: i64,
     pub qty_remaining: i64,
+    pub created_ts: i64,
+    pub traded_since_tick: i64,
+    pub total_updates: i64,
+    pub masked_updates: i64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum QueueModel {
+    Optimistic,
+    Pessimistic,
+    Proportional,
 }
 
 impl OpenOrder {
 
-    pub fn new(id: u64, side: Side, price: i64, qty_ahead: i64, qty_remaining: i64) -> Self {
+    pub fn new(id: u64, side: Side, price: i64, qty_ahead: i64, qty_remaining: i64, created_ts: i64) 
+        -> Self {
 
         OpenOrder {
-            id,
-            side,
-            price,
-            qty_ahead,
-            qty_remaining,
+            id, side, price, qty_ahead, qty_remaining, created_ts,
+            traded_since_tick: 0,
+            total_updates: 0,
+            masked_updates: 0,
         }
 
     }
@@ -39,8 +50,30 @@ impl OpenOrder {
         let reaching_me = qty - absorbed;
         let filled = reaching_me.min(self.qty_remaining);
         self.qty_remaining -= filled;
+        self.traded_since_tick += qty;
 
         Some(filled)
+    }
+
+    pub fn on_tick(&mut self, old_depth: i64, new_depth: i64, model: QueueModel) {
+        let gross = old_depth - new_depth;
+        let residual = gross - self.traded_since_tick;
+        self.traded_since_tick = 0;
+        self.total_updates += 1;
+
+        if residual < 0 {
+            self.masked_updates += 1;
+            return;
+        }
+        if residual == 0 {
+            return;
+        }
+
+        let ahead = match model {
+            QueueModel::Optimistic => residual,
+            QueueModel::Pessimistic => 0,
+            QueueModel::Proportional => todo!(),
+        };
     }
 
 }
@@ -52,7 +85,7 @@ mod tests {
     const PRICE: i64 = 1084325;
 
     fn bid(qty_ahead: i64, qty_remaining: i64) -> OpenOrder {
-        OpenOrder::new(1, Side::Bid, PRICE, qty_ahead, qty_remaining)
+        OpenOrder::new(1, Side::Bid, PRICE, qty_ahead, qty_remaining, 0)
     }
 
     #[test]
