@@ -7,19 +7,19 @@ const QTY_PRECISION:u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Trade {
-    timestamp: i64,
-    price: i64,
-    qty: i64,
-    consumed: Side,
+    pub timestamp: i64,
+    pub price: i64,
+    pub qty: i64,
+    pub consumed: Side,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BookTicker {
-    timestamp: i64,
-    best_bid_price: i64,
-    best_bid_qty: i64,
-    best_ask_price: i64,
-    best_ask_qty: i64,
+    pub timestamp: i64,
+    pub best_bid_price: i64,
+    pub best_bid_qty: i64,
+    pub best_ask_price: i64,
+    pub best_ask_qty: i64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +28,7 @@ pub enum ParseError {
     TooPrecise,
     FieldCount,
     Io(std::io::ErrorKind),
+    NoOrder,
 }
 
 impl From<std::io::Error> for ParseError {

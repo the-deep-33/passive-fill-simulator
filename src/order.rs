@@ -7,10 +7,10 @@ pub enum Side {
 #[derive(Debug)]
 pub struct OpenOrder {
     id: u64,
-    side: Side,
-    price: i64,
-    qty_ahead: i64,
-    qty_remaining: i64,
+    pub side: Side,
+    pub price: i64,
+    pub qty_ahead: i64,
+    pub qty_remaining: i64,
 }
 
 impl OpenOrder {
